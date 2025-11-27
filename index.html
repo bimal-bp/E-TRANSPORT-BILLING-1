@@ -874,14 +874,7 @@
                 </div>
             </div>
          
-            <div class="dashboard-section">
-                <div class="dashboard-section-title">Top Vehicles</div>
-                <div class="dashboard-summary-box">
-                    <div class="product-breakdown" id="topVehicles">
-                        <!-- Top vehicles will be displayed here -->
-                    </div>
-                </div>
-            </div>
+            
          
             <button type="button" class="dashboard-refresh" onclick="updateDashboard()">Refresh Dashboard</button>
         </div>
@@ -1005,7 +998,7 @@
                 const qty = parseFloat(record['NET WT']) || 0;
                 const amt = parseFloat(record['Transport Amount']) || 0;
                 totalQuantity += qty;
-                totalAmount += amt;
+       
 
                 const prod = record['Material'] || 'Unknown';
                 if (!productBreakdown[prod]) productBreakdown[prod] = {qty:0, amt:0};
