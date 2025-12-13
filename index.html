@@ -874,8 +874,6 @@
                 </div>
             </div>
          
-            
-         
             <button type="button" class="dashboard-refresh" onclick="updateDashboard()">Refresh Dashboard</button>
         </div>
     </div>
@@ -938,41 +936,113 @@
         }
 
         // -------------------------------------------------
-        //  LOAD TRANSPORT EXCEL
+        //  LOAD TRANSPORT EXCEL - CORRECTED URL
         // -------------------------------------------------
         async function loadTransportData() {
             const resultsContent = document.getElementById('resultsContent');
             resultsContent.innerHTML = '<div class="loading">Loading transport data...</div>';
 
             try {
-                const githubUrl = 'https://raw.githubusercontent.com/E-TRANSPORT-BILLING/blob/main/Agg_Sales_Report-Nov-25.xlsx';
+                // CORRECTED URL - Using raw.githubusercontent.com format
+                const githubUrl = 'https://raw.githubusercontent.com/bimal-bp/E-TRANSPORT-BILLING/main/Agg_Sales_Report-Nov-25.xlsx';
+                
+                console.log('Fetching data from:', githubUrl);
+                
                 const resp = await fetch(githubUrl);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const arrayBuffer = await resp.arrayBuffer();
-                const workbook = XLSX.read(arrayBuffer, {type: 'array'});
-                const sheet = workbook.Sheets[workbook.SheetNames[0]];
-                const json = XLSX.utils.sheet_to_json(sheet, {header:1, raw:false, dateNF:'yyyy-mm-dd'});
-                processTransportData(json);
-                resultsContent.innerHTML = '';
+                
+                if (!resp.ok) {
+                    // Try alternative URL pattern if first one fails
+                    const altUrl = 'https://github.com/bimal-bp/E-TRANSPORT-BILLING/raw/main/Agg_Sales_Report-Nov-25.xlsx';
+                    console.log('Trying alternative URL:', altUrl);
+                    
+                    const altResp = await fetch(altUrl);
+                    
+                    if (!altResp.ok) {
+                        throw new Error(`Failed to fetch Excel file. Status: ${resp.status} - ${resp.statusText}`);
+                    }
+                    
+                    const altArrayBuffer = await altResp.arrayBuffer();
+                    const workbook = XLSX.read(altArrayBuffer, {type: 'array'});
+                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const json = XLSX.utils.sheet_to_json(sheet, {header: 1, raw: false, dateNF: 'yyyy-mm-dd'});
+                    processTransportData(json);
+                } else {
+                    const arrayBuffer = await resp.arrayBuffer();
+                    const workbook = XLSX.read(arrayBuffer, {type: 'array'});
+                    
+                    // Log sheet names for debugging
+                    console.log('Available sheets:', workbook.SheetNames);
+                    
+                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const json = XLSX.utils.sheet_to_json(sheet, {header: 1, raw: false, dateNF: 'yyyy-mm-dd'});
+                    
+                    // Log first few rows for debugging
+                    console.log('First 3 rows of data:', json.slice(0, 3));
+                    
+                    processTransportData(json);
+                }
+                
+                resultsContent.innerHTML = '<div class="loading" style="color: #4caf50;">✓ Transport data loaded successfully! Search for a vehicle above.</div>';
+                
+                // Clear message after 3 seconds
+                setTimeout(() => {
+                    if (resultsContent.innerHTML.includes('successfully')) {
+                        resultsContent.innerHTML = '';
+                    }
+                }, 3000);
+                
                 updateDashboard();
+                
             } catch (e) {
-                console.error(e);
-                resultsContent.innerHTML = '<div class="no-results">Error loading data.</div>';
+                console.error('Error loading transport data:', e);
+                resultsContent.innerHTML = `
+                    <div class="warning">
+                        <strong>Error loading transport data:</strong> ${e.message}<br><br>
+                        <strong>Troubleshooting steps:</strong>
+                        <ol>
+                            <li>Make sure the Excel file exists at: <a href="https://github.com/bimal-bp/E-TRANSPORT-BILLING/blob/main/Agg_Sales_Report-Nov-25.xlsx" target="_blank">GitHub Link</a></li>
+                            <li>Ensure the repository is public</li>
+                            <li>Check the file name is exactly: "Agg_Sales_Report-Nov-25.xlsx"</li>
+                            <li>Try refreshing the page</li>
+                        </ol>
+                        <button onclick="retryLoadTransportData()" style="margin-top: 10px; padding: 8px 16px; background: #1e88e5; color: white; border: none; border-radius: 4px; cursor: pointer;">Retry Loading Data</button>
+                    </div>`;
             }
         }
 
+        function retryLoadTransportData() {
+            loadTransportData();
+        }
+
         function processTransportData(json) {
-            if (!json || json.length < 2) return;
+            if (!json || json.length < 2) {
+                console.warn('No data or insufficient rows in Excel file');
+                transportData = [];
+                return;
+            }
+            
             const headers = json[0].map(h => (h ?? '').toString().trim());
-            transportData = json.slice(1).map(row => {
-                const obj = {};
-                headers.forEach((h, i) => {
-                    if (h && row[i] !== undefined) {
-                        obj[h] = h === 'Accounting Date' ? convertExcelDate(row[i]) : row[i];
-                    }
-                });
-                return obj;
-            });
+            console.log('Excel headers:', headers);
+            
+            transportData = json.slice(1)
+                .filter(row => row && row.length > 0)
+                .map(row => {
+                    const obj = {};
+                    headers.forEach((h, i) => {
+                        if (h && row[i] !== undefined) {
+                            obj[h] = h === 'Accounting Date' ? convertExcelDate(row[i]) : row[i];
+                        }
+                    });
+                    return obj;
+                })
+                .filter(obj => Object.keys(obj).length > 0);
+            
+            console.log(`Processed ${transportData.length} transport records`);
+            
+            // Log sample data for debugging
+            if (transportData.length > 0) {
+                console.log('Sample transport record:', transportData[0]);
+            }
         }
 
         // -------------------------------------------------
@@ -983,49 +1053,54 @@
                 document.getElementById('totalVehicles').textContent = '0';
                 document.getElementById('totalQuantity').textContent = '0.00';
                 document.getElementById('totalAmount').textContent = '₹0.00';
+                
+                document.getElementById('productBreakdown').innerHTML = '<div class="no-results">No data available</div>';
                 return;
             }
 
             const totalVehicles = new Set();
             let totalQuantity = 0, totalAmount = 0;
-            const productBreakdown = {}, vehicleBreakdown = {};
+            const productBreakdown = {};
 
             transportData.forEach(record => {
-                const v = (record['VEHICLE NO'] || '').toString().trim().toUpperCase();
+                const v = (record['VEHICLE NO'] || record['Vehicle Number'] || '').toString().trim().toUpperCase();
                 if (v) totalVehicles.add(v);
-                if (!vehicleBreakdown[v]) vehicleBreakdown[v] = {qty:0, amt:0};
 
-                const qty = parseFloat(record['NET WT']) || 0;
-                const amt = parseFloat(record['Transport Amount']) || 0;
+                const qty = parseFloat(record['NET WT'] || record['Quantity'] || 0) || 0;
+                const amt = parseFloat(record['Transport Amount'] || record['Amount'] || 0) || 0;
                 totalQuantity += qty;
-       
+                totalAmount += amt;
 
-                const prod = record['Material'] || 'Unknown';
+                // Try different possible column names for product/material
+                const prod = record['Material'] || record['Product'] || record['ITEM'] || 'Unknown';
                 if (!productBreakdown[prod]) productBreakdown[prod] = {qty:0, amt:0};
                 productBreakdown[prod].qty += qty;
                 productBreakdown[prod].amt += amt;
-
-                vehicleBreakdown[v].qty += qty;
-                vehicleBreakdown[v].amt += amt;
             });
 
             document.getElementById('totalVehicles').textContent = totalVehicles.size;
             document.getElementById('totalQuantity').textContent = totalQuantity.toFixed(2);
             document.getElementById('totalAmount').textContent = `₹${totalAmount.toFixed(2)}`;
 
-            const pb = document.getElementById('productBreakdown'); pb.innerHTML = '';
-            Object.entries(productBreakdown).sort((a,b)=>b[1].qty-a[1].qty).forEach(([p,d])=>{
-                const el = document.createElement('div'); el.className='product-item';
-                el.innerHTML = `<div class="product-name">${p}</div><div class="product-qty">${d.qty.toFixed(2)}</div><div class="product-amount">₹${d.amt.toFixed(2)}</div>`;
-                pb.appendChild(el);
-            });
-
-            const tv = document.getElementById('topVehicles'); tv.innerHTML = '';
-            Object.entries(vehicleBreakdown).sort((a,b)=>b[1].amt-a[1].amt).slice(0,5).forEach(([v,d])=>{
-                const el = document.createElement('div'); el.className='product-item';
-                el.innerHTML = `<div class="product-name">${v}</div><div class="product-qty">${d.qty.toFixed(2)}</div><div class="product-amount">₹${d.amt.toFixed(2)}</div>`;
-                tv.appendChild(el);
-            });
+            const pb = document.getElementById('productBreakdown'); 
+            pb.innerHTML = '';
+            
+            if (Object.keys(productBreakdown).length === 0) {
+                pb.innerHTML = '<div class="no-results">No product data found</div>';
+                return;
+            }
+            
+            Object.entries(productBreakdown)
+                .sort((a,b) => b[1].qty - a[1].qty)
+                .forEach(([p,d]) => {
+                    const el = document.createElement('div'); 
+                    el.className='product-item';
+                    el.innerHTML = `
+                        <div class="product-name">${p}</div>
+                        <div class="product-qty">${d.qty.toFixed(2)}</div>
+                        <div class="product-amount">₹${d.amt.toFixed(2)}</div>`;
+                    pb.appendChild(el);
+                });
         }
 
         // -------------------------------------------------
@@ -1037,40 +1112,103 @@
 
             input.addEventListener('input', () => {
                 const term = input.value.trim().toUpperCase();
-                if (!term) { cont.style.display='none'; return; }
+                if (!term) { 
+                    cont.style.display='none'; 
+                    return; 
+                }
                 const matches = getMatchingVehicles(term);
                 displaySuggestions(matches, term);
             });
 
             document.addEventListener('click', e => {
-                if (!input.contains(e.target) && !cont.contains(e.target)) cont.style.display='none';
+                if (!input.contains(e.target) && !cont.contains(e.target)) {
+                    cont.style.display='none';
+                }
             });
 
             input.addEventListener('keydown', e => {
                 const items = cont.querySelectorAll('.suggestion-item');
                 const active = cont.querySelector('.suggestion-item.active');
 
-                if (e.key==='ArrowDown') { e.preventDefault(); if (items.length) (active ? items[(Array.from(items).indexOf(active)+1)%items.length] : items[0]).classList.add('active'); }
-                else if (e.key==='ArrowUp') { e.preventDefault(); if (active) { const i=Array.from(items).indexOf(active)-1; items[i<0?items.length-1:i].classList.add('active'); active.classList.remove('active'); } }
-                else if (e.key==='Enter') { e.preventDefault(); if (active) { input.value=active.textContent; cont.style.display='none'; searchVehicle(); } else searchVehicle(); }
+                if (e.key === 'ArrowDown') { 
+                    e.preventDefault(); 
+                    if (items.length) {
+                        cont.querySelectorAll('.suggestion-item').forEach(i => i.classList.remove('active'));
+                        const nextIndex = active ? (Array.from(items).indexOf(active) + 1) % items.length : 0;
+                        items[nextIndex].classList.add('active');
+                    }
+                } else if (e.key === 'ArrowUp') { 
+                    e.preventDefault(); 
+                    if (active) { 
+                        const items = cont.querySelectorAll('.suggestion-item');
+                        const currentIndex = Array.from(items).indexOf(active);
+                        const prevIndex = (currentIndex - 1 + items.length) % items.length;
+                        
+                        cont.querySelectorAll('.suggestion-item').forEach(i => i.classList.remove('active'));
+                        items[prevIndex].classList.add('active');
+                    }
+                } else if (e.key === 'Enter') { 
+                    e.preventDefault(); 
+                    if (active) { 
+                        input.value = active.textContent; 
+                        cont.style.display='none'; 
+                        searchVehicle(); 
+                    } else {
+                        searchVehicle(); 
+                    }
+                }
             });
         }
 
         function getMatchingVehicles(term) {
             const set = new Set();
-            vehicleData.forEach(v => v.vehicleNumbers.forEach(n => { if (n && n.toUpperCase().includes(term)) set.add(n); }));
-            transportData.forEach(r => { const v=(r['VEHICLE NO']||'').toString().trim().toUpperCase(); if (v.includes(term)) set.add(v); });
-            return Array.from(set).sort((a,b)=>a.indexOf(term)-b.indexOf(term));
+            
+            // Search in vendor data
+            vehicleData.forEach(v => {
+                v.vehicleNumbers.forEach(n => { 
+                    if (n && n.toUpperCase().includes(term)) set.add(n); 
+                });
+            });
+            
+            // Search in transport data
+            transportData.forEach(r => { 
+                const v = (r['VEHICLE NO'] || r['Vehicle Number'] || '').toString().trim().toUpperCase(); 
+                if (v && v.includes(term)) set.add(v); 
+            });
+            
+            return Array.from(set)
+                .sort((a,b) => {
+                    // Sort by exact match first, then by position of match
+                    const aExact = a === term;
+                    const bExact = b === term;
+                    if (aExact && !bExact) return -1;
+                    if (!aExact && bExact) return 1;
+                    return a.indexOf(term) - b.indexOf(term);
+                });
         }
 
         function displaySuggestions(matches, term) {
-            const cont = document.getElementById('suggestionsContainer'); cont.innerHTML='';
-            if (!matches.length) { cont.style.display='none'; return; }
+            const cont = document.getElementById('suggestionsContainer'); 
+            cont.innerHTML='';
+            
+            if (!matches.length) { 
+                cont.style.display='none'; 
+                return; 
+            }
+            
             matches.forEach(m => {
-                const el = document.createElement('div'); el.className='suggestion-item';
+                const el = document.createElement('div'); 
+                el.className='suggestion-item';
                 el.innerHTML = m.replace(new RegExp(term,'gi'), '<span class="highlight">$&</span>');
-                el.onclick = () => { document.getElementById('vehicleSearch').value=m; cont.style.display='none'; searchVehicle(); };
-                el.onmouseover = () => { cont.querySelectorAll('.suggestion-item').forEach(i=>i.classList.remove('active')); el.classList.add('active'); };
+                el.onclick = () => { 
+                    document.getElementById('vehicleSearch').value = m; 
+                    cont.style.display='none'; 
+                    searchVehicle(); 
+                };
+                el.onmouseover = () => { 
+                    cont.querySelectorAll('.suggestion-item').forEach(i => i.classList.remove('active')); 
+                    el.classList.add('active'); 
+                };
                 cont.appendChild(el);
             });
             cont.style.display='block';
@@ -1081,20 +1219,32 @@
         // -------------------------------------------------
         function searchVehicle() {
             const term = document.getElementById('vehicleSearch').value.trim().toUpperCase();
-            if (!term) return alert('Enter a vehicle number');
+            if (!term) {
+                alert('Please enter a vehicle number');
+                return;
+            }
 
-            const vendorMatches = vehicleData.filter(v => v.vehicleNumbers.includes(term));
+            const vendorMatches = vehicleData.filter(v => 
+                v.vehicleNumbers.some(n => n.toUpperCase() === term)
+            );
 
-            // store full context BEFORE display
+            // Find transport records - check multiple possible column names
+            const transportRecords = transportData.filter(r => {
+                const vehicleNo = (r['VEHICLE NO'] || r['Vehicle Number'] || '').toString().trim().toUpperCase();
+                return vehicleNo === term;
+            });
+
+            // Store full context BEFORE display
             window.currentSearch = {
                 vehicleNumber: term,
                 vendorDetails: vendorMatches,
-                transportRecords: transportData.filter(r => (r['VEHICLE NO']||'').toString().trim().toUpperCase()===term),
+                transportRecords: transportRecords,
                 allVendorVehicles: [],
-                vendorTotals: {totalVehicles:0,totalRecords:0,totalQuantity:0,totalAmount:0},
+                vendorTotals: {totalVehicles:0, totalRecords:0, totalQuantity:0, totalAmount:0},
                 manualAmount: null
             };
 
+            // Get all vehicles for matched vendors
             const allVeh = new Set();
             vendorMatches.forEach(v => v.vehicleNumbers.forEach(n => allVeh.add(n)));
             window.currentSearch.allVendorVehicles = Array.from(allVeh);
@@ -1104,50 +1254,86 @@
 
         function displayResults(vendorMatches, searchValue) {
             const sec = document.getElementById('resultsSection');
-            const cont = document.getElementById('resultsContent'); cont.innerHTML='';
+            const cont = document.getElementById('resultsContent'); 
+            cont.innerHTML='';
 
-            if (vendorMatches.length===0) {
+            if (vendorMatches.length === 0) {
                 const trans = window.currentSearch.transportRecords;
                 if (trans.length) {
-                    cont.innerHTML = '<div class="warning"><strong>Note:</strong> Vendor details not found, but transport records exist.</div>';
+                    cont.innerHTML = '<div class="warning"><strong>Note:</strong> Vendor details not found in database, but transport records exist.</div>';
                     displayTransportDetails(searchValue, trans);
                 } else {
-                    cont.innerHTML = '<div class="no-results">No data found.</div>';
+                    cont.innerHTML = '<div class="no-results">No vendor or transport data found for this vehicle number.</div>';
                 }
-                sec.style.display='block'; return;
+                sec.style.display='block'; 
+                sec.scrollIntoView({behavior:'smooth'});
+                return;
             }
 
+            // Group vendors by party name and PAN (in case of duplicates)
             const groups = {};
             vendorMatches.forEach(v => {
-                const k = `${v.partyName}|${v.pan}`;
-                if (!groups[k]) groups[k] = {vendor:v, vehicles:[]};
-                v.vehicleNumbers.forEach(n => { if (!groups[k].vehicles.includes(n)) groups[k].vehicles.push(n); });
+                const key = `${v.partyName}|${v.pan}`;
+                if (!groups[key]) {
+                    groups[key] = {
+                        vendor: v,
+                        vehicles: []
+                    };
+                }
+                v.vehicleNumbers.forEach(n => {
+                    if (!groups[key].vehicles.includes(n)) {
+                        groups[key].vehicles.push(n);
+                    }
+                });
             });
 
+            // Display each vendor group
             Object.values(groups).forEach((g, idx) => {
-                const vg = document.createElement('div'); vg.className='vendor-group';
-                const hdr = document.createElement('div'); hdr.className='vendor-header';
-                hdr.innerHTML = `<div><div class="result-title">${g.vendor.partyName}</div><div><strong>PAN:</strong> ${g.vendor.pan}</div></div><div>${g.vehicles.length} Vehicles</div>`;
-                hdr.onclick = () => document.getElementById(`veh${idx}`).classList.toggle('expanded');
+                const vg = document.createElement('div'); 
+                vg.className='vendor-group';
+                
+                const hdr = document.createElement('div'); 
+                hdr.className='vendor-header';
+                hdr.innerHTML = `
+                    <div>
+                        <div class="result-title">${g.vendor.partyName}</div>
+                        <div><strong>PAN:</strong> ${g.vendor.pan || 'Not provided'}</div>
+                    </div>
+                    <div>${g.vehicles.length} Vehicle${g.vehicles.length !== 1 ? 's' : ''}</div>`;
+                hdr.onclick = () => {
+                    const vehDiv = document.getElementById(`veh${idx}`);
+                    vehDiv.classList.toggle('expanded');
+                };
                 vg.appendChild(hdr);
 
-                const vehDiv = document.createElement('div'); vehDiv.id=`veh${idx}`; vehDiv.className='vendor-vehicles';
+                const vehDiv = document.createElement('div'); 
+                vehDiv.id = `veh${idx}`; 
+                vehDiv.className='vendor-vehicles';
+                
                 g.vehicles.forEach(vn => {
-                    const opt = document.createElement('div'); opt.className='vehicle-option';
-                    if (vn===searchValue) opt.classList.add('selected');
+                    const opt = document.createElement('div'); 
+                    opt.className='vehicle-option';
+                    if (vn === searchValue) opt.classList.add('selected');
                     opt.textContent = vn;
-                    opt.onclick = () => { document.getElementById('vehicleSearch').value=vn; searchVehicle(); };
+                    opt.onclick = () => { 
+                        document.getElementById('vehicleSearch').value = vn; 
+                        searchVehicle(); 
+                    };
                     vehDiv.appendChild(opt);
                 });
                 vg.appendChild(vehDiv);
                 cont.appendChild(vg);
 
-                const det = document.createElement('div'); det.className='result-item';
-                det.innerHTML = `<div><strong>Bank A/c:</strong> ${g.vendor.accountNo}</div>
-                                 <div><strong>Bank:</strong> ${g.vendor.bankName}</div>
-                                 <div><strong>Beneficiary:</strong> ${g.vendor.beneficiary}</div>`;
+                // Display vendor bank details
+                const det = document.createElement('div'); 
+                det.className='result-item';
+                det.innerHTML = `
+                    <div><strong>Bank Account:</strong> ${g.vendor.accountNo}</div>
+                    <div><strong>Bank & Branch:</strong> ${g.vendor.bankName}</div>
+                    <div><strong>Beneficiary:</strong> ${g.vendor.beneficiary}</div>`;
                 cont.appendChild(det);
 
+                // Display transport details for this vendor
                 displayVendorTransportDetails(g.vendor, g.vehicles);
             });
 
@@ -1157,72 +1343,129 @@
 
         function displayVendorTransportDetails(vendor, vehicleNumbers) {
             const allRecs = [];
-            let totQty=0, totAmt=0, totRec=0;
+            let totQty = 0, totAmt = 0, totRec = 0;
 
             vehicleNumbers.forEach(vn => {
-                const recs = transportData.filter(r => (r['VEHICLE NO']||'').toString().trim().toUpperCase()===vn);
-                recs.forEach(r => { totQty+=parseFloat(r['NET WT'])||0; totAmt+=parseFloat(r['Transport Amount'])||0; totRec++; });
+                const recs = transportData.filter(r => {
+                    const vehicleNo = (r['VEHICLE NO'] || r['Vehicle Number'] || '').toString().trim().toUpperCase();
+                    return vehicleNo === vn;
+                });
+                recs.forEach(r => { 
+                    totQty += parseFloat(r['NET WT'] || r['Quantity'] || 0) || 0; 
+                    totAmt += parseFloat(r['Transport Amount'] || r['Amount'] || 0) || 0; 
+                    totRec++; 
+                });
                 allRecs.push(...recs);
             });
 
-            window.currentSearch.vendorTotals = {totalVehicles:vehicleNumbers.length, totalRecords:totRec, totalQuantity:totQty, totalAmount:totAmt};
+            window.currentSearch.vendorTotals = {
+                totalVehicles: vehicleNumbers.length, 
+                totalRecords: totRec, 
+                totalQuantity: totQty, 
+                totalAmount: totAmt
+            };
 
-            const sum = document.createElement('div'); sum.className='vendor-total-summary';
+            // Create vendor total summary
+            const sum = document.createElement('div'); 
+            sum.className='vendor-total-summary';
             sum.innerHTML = `
                 <div class="vendor-total-title">Vendor Total Summary</div>
                 <div class="vendor-total-details">
-                    <div class="vendor-total-item"><div class="vendor-total-label">Vehicles</div><div class="vendor-total-value">${vehicleNumbers.length}</div></div>
-                    <div class="vendor-total-item"><div class="vendor-total-label">Records</div><div class="vendor-total-value">${totRec}</div></div>
-                    <div class="vendor-total-item"><div class="vendor-total-label">Quantity</div><div class="vendor-total-value">${totQty.toFixed(2)}</div></div>
-                    <div class="vendor-total-item"><div class="vendor-total-label">Amount</div><div class="vendor-total-value">₹${totAmt.toFixed(2)}</div></div>
+                    <div class="vendor-total-item">
+                        <div class="vendor-total-label">Vehicles</div>
+                        <div class="vendor-total-value">${vehicleNumbers.length}</div>
+                    </div>
+                    <div class="vendor-total-item">
+                        <div class="vendor-total-label">Records</div>
+                        <div class="vendor-total-value">${totRec}</div>
+                    </div>
+                    <div class="vendor-total-item">
+                        <div class="vendor-total-label">Quantity</div>
+                        <div class="vendor-total-value">${totQty.toFixed(2)}</div>
+                    </div>
+                    <div class="vendor-total-item">
+                        <div class="vendor-total-label">Amount</div>
+                        <div class="vendor-total-value">₹${totAmt.toFixed(2)}</div>
+                    </div>
                 </div>`;
             document.getElementById('resultsContent').appendChild(sum);
 
+            // Display transport details for each vehicle
             vehicleNumbers.forEach(vn => {
-                const recs = allRecs.filter(r => (r['VEHICLE NO']||'').toString().trim().toUpperCase()===vn);
-                if (recs.length) displayTransportDetails(vn, recs);
+                const recs = allRecs.filter(r => {
+                    const vehicleNo = (r['VEHICLE NO'] || r['Vehicle Number'] || '').toString().trim().toUpperCase();
+                    return vehicleNo === vn;
+                });
+                if (recs.length) {
+                    displayTransportDetails(vn, recs);
+                }
             });
         }
 
         function displayTransportDetails(vehicleNumber, records) {
             if (!records.length) return;
-            const div = document.createElement('div'); div.className='transport-details';
-            const safe = vehicleNumber.replace(/\s+/g,'_');
+            
+            const div = document.createElement('div'); 
+            div.className='transport-details';
+            const safe = vehicleNumber.replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_]/g, '');
+            
             div.innerHTML = `
                 <div class="result-title">Transport Details for Vehicle: ${vehicleNumber}</div>
                 <table class="transport-table">
-                    <thead><tr><th>Date</th><th>Customer</th><th>Vehicle</th><th>Material</th><th>Net Wt</th><th>Rate</th><th>Amount</th></tr></thead>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Customer</th>
+                            <th>Vehicle</th>
+                            <th>Material</th>
+                            <th>Net Wt</th>
+                            <th>Rate</th>
+                            <th>Amount</th>
+                        </tr>
+                    </thead>
                     <tbody id="tbody_${safe}"></tbody>
                 </table>
                 <div class="summary-box" id="summary_${safe}">
-                    <div class="summary-item"><div class="summary-label">Records</div><div class="summary-value" id="recs_${safe}">0</div></div>
+                    <div class="summary-item">
+                        <div class="summary-label">Records</div>
+                        <div class="summary-value" id="recs_${safe}">0</div>
+                    </div>
                     <div class="summary-divider"></div>
-                    <div class="summary-item"><div class="summary-label">Quantity</div><div class="summary-value" id="qty_${safe}">0</div></div>
+                    <div class="summary-item">
+                        <div class="summary-label">Quantity</div>
+                        <div class="summary-value" id="qty_${safe}">0.00</div>
+                    </div>
                     <div class="summary-divider"></div>
-                    <div class="summary-item"><div class="summary-label">Amount</div><div class="summary-value" id="amt_${safe}">0.00</div></div>
+                    <div class="summary-item">
+                        <div class="summary-label">Amount</div>
+                        <div class="summary-value" id="amt_${safe}">0.00</div>
+                    </div>
                 </div>
                 <div class="amount-edit">
-                    <label for="manual_${safe}">Manual Amount:</label>
-                    <input type="number" id="manual_${safe}" class="amount-input" placeholder="Enter amount">
-                    <button type="button" class="btn-update" onclick="updateTotalAmount('${vehicleNumber}')">Update</button>
+                    <label for="manual_${safe}">Manual Amount Override:</label>
+                    <input type="number" id="manual_${safe}" class="amount-input" placeholder="Enter manual amount">
+                    <button type="button" class="btn-update" onclick="updateTotalAmount('${vehicleNumber}')">Update Amount</button>
                 </div>`;
+            
             document.getElementById('resultsContent').appendChild(div);
 
             const tbody = document.getElementById(`tbody_${safe}`);
-            let qty=0, amt=0;
+            let qty = 0, amt = 0;
+            
             records.forEach(r => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td>${formatDateForDisplay(r['Accounting Date'])}</td>
-                    <td>${r['NAME OF THE CUSTOMER']||''}</td>
-                    <td>${r['VEHICLE NO']||''}</td>
-                    <td>${r['Material']||''}</td>
-                    <td>${r['NET WT']||''}</td>
-                    <td>${r['Transport Rate']||''}</td>
-                    <td>${r['Transport Amount']||''}</td>`;
+                    <td>${formatDateForDisplay(r['Accounting Date'] || r['Date'])}</td>
+                    <td>${r['NAME OF THE CUSTOMER'] || r['Customer Name'] || ''}</td>
+                    <td>${r['VEHICLE NO'] || r['Vehicle Number'] || ''}</td>
+                    <td>${r['Material'] || r['Product'] || r['ITEM'] || ''}</td>
+                    <td>${r['NET WT'] || r['Quantity'] || '0.00'}</td>
+                    <td>${r['Transport Rate'] || r['Rate'] || '0.00'}</td>
+                    <td>${r['Transport Amount'] || r['Amount'] || '0.00'}</td>`;
                 tbody.appendChild(tr);
-                qty += parseFloat(r['NET WT'])||0;
-                amt += parseFloat(r['Transport Amount'])||0;
+                
+                qty += parseFloat(r['NET WT'] || r['Quantity'] || 0) || 0;
+                amt += parseFloat(r['Transport Amount'] || r['Amount'] || 0) || 0;
             });
 
             document.getElementById(`recs_${safe}`).textContent = records.length;
@@ -1232,80 +1475,137 @@
         }
 
         function updateTotalAmount(vehicleNumber) {
-            const safe = vehicleNumber.replace(/\s+/g,'_');
+            const safe = vehicleNumber.replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_]/g, '');
             const val = parseFloat(document.getElementById(`manual_${safe}`).value);
-            if (isNaN(val)) return alert('Enter a valid amount');
+            
+            if (isNaN(val) || val < 0) {
+                alert('Please enter a valid positive amount');
+                return;
+            }
+            
             document.getElementById(`amt_${safe}`).textContent = val.toFixed(2);
             window.currentSearch.manualAmount = val;
+            
+            // Update vendor totals if this is the searched vehicle
+            if (vehicleNumber === window.currentSearch.vehicleNumber) {
+                window.currentSearch.vendorTotals.totalAmount = val;
+            }
         }
 
         // -------------------------------------------------
         //  SAVE TO LIST
         // -------------------------------------------------
         function saveCurrentResult() {
-            if (!window.currentSearch) return alert('Nothing to save');
+            if (!window.currentSearch) {
+                alert('No search results to save. Please search for a vehicle first.');
+                return;
+            }
 
             const vendor = window.currentSearch.vendorDetails[0] || null;
             const allVeh = window.currentSearch.allVendorVehicles;
             const key = vendor ? `${vendor.partyName}|${vendor.pan}` : window.currentSearch.vehicleNumber;
 
             const allRecs = [];
-            let totQty=0, totAmt=0, totRec=0;
+            let totQty = 0, totAmt = 0, totRec = 0;
+            
             allVeh.forEach(vn => {
-                const recs = transportData.filter(r => (r['VEHICLE NO']||'').toString().trim().toUpperCase()===vn);
-                recs.forEach(r => { totQty+=parseFloat(r['NET WT'])||0; totAmt+=parseFloat(r['Transport Amount'])||0; totRec++; });
+                const recs = transportData.filter(r => {
+                    const vehicleNo = (r['VEHICLE NO'] || r['Vehicle Number'] || '').toString().trim().toUpperCase();
+                    return vehicleNo === vn;
+                });
+                recs.forEach(r => { 
+                    totQty += parseFloat(r['NET WT'] || r['Quantity'] || 0) || 0; 
+                    totAmt += parseFloat(r['Transport Amount'] || r['Amount'] || 0) || 0; 
+                    totRec++; 
+                });
                 allRecs.push(...recs);
             });
 
-            const finalAmt = window.currentSearch.manualAmount ?? totAmt;
+            const finalAmt = window.currentSearch.manualAmount !== null ? 
+                window.currentSearch.manualAmount : totAmt;
 
             const obj = {
                 vehicleNumber: window.currentSearch.vehicleNumber,
                 vendorDetails: vendor ? [vendor] : [],
                 allVendorVehicles: allVeh,
                 allVendorTransportRecords: allRecs,
-                vendorTotals: {totalVehicles:allVeh.length, totalRecords:totRec, totalQuantity:totQty, totalAmount:finalAmt},
-                timestamp: new Date().toISOString()
+                vendorTotals: {
+                    totalVehicles: allVeh.length, 
+                    totalRecords: totRec, 
+                    totalQuantity: totQty, 
+                    totalAmount: finalAmt
+                },
+                timestamp: new Date().toISOString(),
+                searchTime: new Date().toLocaleString()
             };
 
+            // Check if already exists
             const idx = savedResults.findIndex(r => {
-                const k = r.vendorDetails[0] ? `${r.vendorDetails[0].partyName}|${r.vendorDetails[0].pan}` : r.vehicleNumber;
-                return k===key;
+                const existingKey = r.vendorDetails[0] ? 
+                    `${r.vendorDetails[0].partyName}|${r.vendorDetails[0].pan}` : 
+                    r.vehicleNumber;
+                return existingKey === key;
             });
 
-            if (idx>-1) savedResults[idx] = obj;
-            else savedResults.push(obj);
+            if (idx > -1) {
+                if (confirm('A result for this vendor already exists. Replace it?')) {
+                    savedResults[idx] = obj;
+                } else {
+                    return;
+                }
+            } else {
+                savedResults.push(obj);
+            }
 
             saveSavedResults();
             displaySavedResults();
-            alert('Result saved!');
+            alert('Result saved successfully!');
         }
 
         // -------------------------------------------------
         //  SAVED RESULTS
         // -------------------------------------------------
         function loadSavedResults() {
-            const raw = localStorage.getItem('transportSavedResults');
-            if (raw) { savedResults = JSON.parse(raw); displaySavedResults(); }
+            try {
+                const raw = localStorage.getItem('transportSavedResults');
+                if (raw) { 
+                    savedResults = JSON.parse(raw); 
+                    displaySavedResults(); 
+                }
+            } catch (e) {
+                console.error('Error loading saved results:', e);
+                savedResults = [];
+            }
         }
-        function saveSavedResults() { localStorage.setItem('transportSavedResults', JSON.stringify(savedResults)); }
+        
+        function saveSavedResults() { 
+            localStorage.setItem('transportSavedResults', JSON.stringify(savedResults)); 
+        }
 
         function displaySavedResults() {
             const list = document.getElementById('savedResultsList');
-            if (!savedResults.length) { list.innerHTML='<div class="no-results">No saved results.</div>'; return; }
+            if (!savedResults.length) { 
+                list.innerHTML='<div class="no-results">No saved results yet. Search for a vehicle and click "Save to List".</div>'; 
+                return; 
+            }
+            
             list.innerHTML='';
             savedResults.forEach((r,i) => {
                 const v = r.vendorDetails[0] || null;
                 const t = r.vendorTotals;
-                const el = document.createElement('div'); el.className='saved-result-item';
+                const el = document.createElement('div'); 
+                el.className='saved-result-item';
                 el.innerHTML = `
                     <div class="saved-result-info">
-                        <div class="result-title">${v?v.partyName:'No Vendor'}</div>
-                        <div><strong>PAN:</strong> ${v?v.pan:'N/A'}</div>
+                        <div class="result-title">${v ? v.partyName : 'No Vendor'}</div>
+                        <div><strong>PAN:</strong> ${v ? v.pan : 'N/A'}</div>
                         <div><strong>Vehicles:</strong> ${t.totalVehicles}</div>
                         <div><strong>Records:</strong> ${t.totalRecords}</div>
-                        <div><strong>Qty:</strong> ${t.totalQuantity.toFixed(2)}</div>
-                        <div><strong>Amount:</strong> ₹${t.totalAmount.toFixed(2)}</div>
+                        <div><strong>Total Quantity:</strong> ${t.totalQuantity.toFixed(2)}</div>
+                        <div><strong>Total Amount:</strong> ₹${t.totalAmount.toFixed(2)}</div>
+                        <div style="font-size: 12px; color: #666; margin-top: 5px;">
+                            Saved: ${r.searchTime || 'Recently'}
+                        </div>
                     </div>
                     <div class="saved-result-actions">
                         <button type="button" class="btn-view" onclick="viewSavedResult(${i})">View</button>
@@ -1318,23 +1618,27 @@
         function viewSavedResult(idx) {
             const r = savedResults[idx];
             if (!r) return;
-            const first = r.allVendorVehicles[0] || r.vehicleNumber;
-            document.getElementById('vehicleSearch').value = first;
+            
+            const firstVehicle = r.allVendorVehicles[0] || r.vehicleNumber;
+            document.getElementById('vehicleSearch').value = firstVehicle;
+            
             window.currentSearch = {
-                vehicleNumber: first,
+                vehicleNumber: firstVehicle,
                 vendorDetails: r.vendorDetails,
-                transportRecords: [],
+                transportRecords: r.allVendorTransportRecords,
                 allVendorVehicles: r.allVendorVehicles,
                 vendorTotals: r.vendorTotals,
-                manualAmount: r.vendorTotals.totalAmount !==
-                    r.allVendorTransportRecords.reduce((s,rec)=>s+(parseFloat(rec['Transport Amount'])||0),0)
+                manualAmount: r.vendorTotals.totalAmount !== 
+                    r.allVendorTransportRecords.reduce((s, rec) => 
+                        s + (parseFloat(rec['Transport Amount'] || rec['Amount'] || 0) || 0), 0) 
                     ? r.vendorTotals.totalAmount : null
             };
-            displayResults(r.vendorDetails, first);
+            
+            displayResults(r.vendorDetails, firstVehicle);
         }
 
         function removeSavedResult(idx) {
-            if (confirm('Remove this saved result?')) {
+            if (confirm('Are you sure you want to remove this saved result?')) {
                 savedResults.splice(idx,1);
                 saveSavedResults();
                 displaySavedResults();
@@ -1342,8 +1646,12 @@
         }
 
         function clearSavedResults() {
-            if (!savedResults.length) return alert('Nothing to clear');
-            if (confirm('Clear **all** saved results?')) {
+            if (!savedResults.length) {
+                alert('No saved results to clear.');
+                return;
+            }
+            
+            if (confirm('Are you sure you want to clear ALL saved results? This action cannot be undone.')) {
                 savedResults = [];
                 saveSavedResults();
                 displaySavedResults();
@@ -1354,83 +1662,125 @@
         //  DOWNLOAD EXCEL
         // -------------------------------------------------
         function downloadSavedResults() {
-            if (!savedResults.length) return alert('No saved results to export.');
-
-            function tryExport(attempts=0) {
-                if (typeof XLSX !== 'undefined') { doExport(); }
-                else if (attempts<20) { setTimeout(()=>tryExport(attempts+1),200); }
-                else alert('Excel library failed to load.');
+            if (!savedResults.length) {
+                alert('No saved results to export. Please save some results first.');
+                return;
             }
-            tryExport();
 
-            function doExport() {
+            // Check if XLSX library is loaded
+            if (typeof XLSX === 'undefined') {
+                alert('Excel library not loaded. Please refresh the page and try again.');
+                return;
+            }
+
+            try {
                 const wb = XLSX.utils.book_new();
 
-                // Summary
-                const sum = [['Vendor','PAN','A/c No','Bank','Beneficiary','Vehicles','Records','Qty','Amount']];
+                // Summary sheet
+                const summaryData = [
+                    ['Vendor Name', 'PAN', 'Account No', 'Bank Name', 'Beneficiary', 'Total Vehicles', 'Total Records', 'Total Quantity', 'Total Amount', 'Saved Time']
+                ];
+                
                 savedResults.forEach(r => {
                     const v = r.vendorDetails[0] || {};
                     const t = r.vendorTotals;
-                    sum.push([v.partyName||'N/A', v.pan||'N/A', v.accountNo||'N/A',
-                              v.bankName||'N/A', v.beneficiary||'N/A',
-                              t.totalVehicles, t.totalRecords, t.totalQuantity, t.totalAmount]);
+                    summaryData.push([
+                        v.partyName || 'N/A',
+                        v.pan || 'N/A',
+                        v.accountNo || 'N/A',
+                        v.bankName || 'N/A',
+                        v.beneficiary || 'N/A',
+                        t.totalVehicles,
+                        t.totalRecords,
+                        t.totalQuantity,
+                        t.totalAmount,
+                        r.searchTime || new Date().toLocaleString()
+                    ]);
                 });
-                XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sum), 'Summary');
+                
+                const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+                XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary');
 
-                // One sheet per vendor
-                savedResults.forEach((r,i) => {
+                // Detailed sheets for each vendor
+                savedResults.forEach((r, i) => {
                     const v = r.vendorDetails[0] || {};
-                    const safe = (v.partyName||`Vendor_${i+1}`).replace(/[^\w]/g,'_').substring(0,31);
-                    const rows = [['Date','Customer','Vehicle','Material','Net Wt','Rate','Amount']];
+                    const sheetName = (v.partyName || `Vendor_${i+1}`)
+                        .replace(/[^\w\s]/g, '')
+                        .substring(0, 31);
+                    
+                    const detailData = [
+                        ['Date', 'Customer', 'Vehicle', 'Material', 'Net Weight', 'Rate', 'Amount']
+                    ];
+                    
                     r.allVendorTransportRecords.forEach(rec => {
-                        rows.push([
-                            formatDateForDisplay(rec['Accounting Date']),
-                            rec['NAME OF THE CUSTOMER']||'',
-                            rec['VEHICLE NO']||'',
-                            rec['Material']||'',
-                            rec['NET WT']||'',
-                            rec['Transport Rate']||'',
-                            rec['Transport Amount']||''
+                        detailData.push([
+                            formatDateForDisplay(rec['Accounting Date'] || rec['Date']),
+                            rec['NAME OF THE CUSTOMER'] || rec['Customer Name'] || '',
+                            rec['VEHICLE NO'] || rec['Vehicle Number'] || '',
+                            rec['Material'] || rec['Product'] || rec['ITEM'] || '',
+                            rec['NET WT'] || rec['Quantity'] || '',
+                            rec['Transport Rate'] || rec['Rate'] || '',
+                            rec['Transport Amount'] || rec['Amount'] || ''
                         ]);
                     });
-                    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), safe);
+                    
+                    const detailSheet = XLSX.utils.aoa_to_sheet(detailData);
+                    XLSX.utils.book_append_sheet(wb, detailSheet, sheetName);
                 });
 
-                const file = `Transport_Results_${new Date().toISOString().split('T')[0]}.xlsx`;
-                XLSX.writeFile(wb, file);
+                // Generate filename with current date
+                const today = new Date();
+                const dateStr = today.toISOString().split('T')[0];
+                const filename = `Transport_Billing_Report_${dateStr}.xlsx`;
+                
+                XLSX.writeFile(wb, filename);
+                
+            } catch (error) {
+                console.error('Error generating Excel:', error);
+                alert('Error generating Excel file: ' + error.message);
             }
         }
 
         // -------------------------------------------------
-        //  MISC
+        //  MISC FUNCTIONS
         // -------------------------------------------------
-        function printResults() { window.print(); }
+        function printResults() { 
+            window.print(); 
+        }
 
         function toggleAddVendorForm() {
             const sec = document.getElementById('addVendorSection');
             const res = document.getElementById('resultsSection');
-            if (sec.style.display==='block') {
-                sec.style.display='none';
+            
+            if (sec.style.display === 'block') {
+                sec.style.display = 'none';
                 document.getElementById('vendorForm').reset();
                 const cont = document.getElementById('vehicleNumbersContainer');
-                while (cont.children.length>1) cont.removeChild(cont.lastChild);
+                while (cont.children.length > 1) {
+                    cont.removeChild(cont.lastChild);
+                }
             } else {
-                sec.style.display='block';
-                res.style.display='none';
+                sec.style.display = 'block';
+                res.style.display = 'none';
                 sec.scrollIntoView({behavior:'smooth'});
             }
         }
 
         function addVehicleField() {
             const cont = document.getElementById('vehicleNumbersContainer');
-            const div = document.createElement('div'); div.className='vehicle-number-input';
-            div.innerHTML = `<input type="text" class="vehicleNumber" placeholder="Vehicle Number"><button type="button" class="remove-vehicle" onclick="removeVehicleField(this)">Remove</button>`;
+            const div = document.createElement('div'); 
+            div.className='vehicle-number-input';
+            div.innerHTML = `
+                <input type="text" class="vehicleNumber" placeholder="Vehicle Number" required>
+                <button type="button" class="remove-vehicle" onclick="removeVehicleField(this)">Remove</button>`;
             cont.appendChild(div);
         }
 
         function removeVehicleField(btn) {
             const cont = document.getElementById('vehicleNumbersContainer');
-            if (cont.children.length>1) cont.removeChild(btn.parentNode);
+            if (cont.children.length > 1) {
+                cont.removeChild(btn.parentNode);
+            }
         }
 
         function addNewVendor() {
@@ -1438,38 +1788,97 @@
             const acc = document.getElementById('accountNo').value.trim();
             const bank = document.getElementById('bankName').value.trim();
             const ben = document.getElementById('beneficiary').value.trim();
-            const pan = document.getElementById('pan').value.trim();
+            const pan = document.getElementById('pan').value.trim().toUpperCase();
+            
             const inputs = document.querySelectorAll('.vehicleNumber');
-            const veh = Array.from(inputs).map(i=>i.value.trim().toUpperCase()).filter(v=>v);
-            if (!party||!acc||!bank||!ben||!pan||veh.length===0) return alert('Fill all fields');
-            vehicleData.push({partyName:party, accountNo:acc, bankName:bank, beneficiary:ben, pan, vehicleNumbers:veh});
-            alert('Vendor added!');
+            const veh = Array.from(inputs)
+                .map(i => i.value.trim().toUpperCase())
+                .filter(v => v);
+            
+            if (!party || !acc || !bank || !ben || !pan || veh.length === 0) {
+                alert('Please fill all required fields and add at least one vehicle number.');
+                return;
+            }
+            
+            // Check if PAN is valid format
+            if (!/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
+                alert('Please enter a valid PAN number (format: ABCDE1234F)');
+                return;
+            }
+            
+            // Check if vendor already exists
+            const existingVendor = vehicleData.find(v => 
+                v.partyName === party || v.pan === pan
+            );
+            
+            if (existingVendor) {
+                if (confirm('A vendor with this name or PAN already exists. Add anyway?')) {
+                    vehicleData.push({
+                        partyName: party, 
+                        accountNo: acc, 
+                        bankName: bank, 
+                        beneficiary: ben, 
+                        pan: pan, 
+                        vehicleNumbers: veh
+                    });
+                } else {
+                    return;
+                }
+            } else {
+                vehicleData.push({
+                    partyName: party, 
+                    accountNo: acc, 
+                    bankName: bank, 
+                    beneficiary: ben, 
+                    pan: pan, 
+                    vehicleNumbers: veh
+                });
+            }
+            
+            alert('Vendor added successfully!');
             document.getElementById('vendorForm').reset();
             toggleAddVendorForm();
         }
 
         // -------------------------------------------------
-        //  HELPERS
+        //  HELPER FUNCTIONS
         // -------------------------------------------------
         function convertExcelDate(v) {
-            if (typeof v==='string' && v.includes('-')) return v;
-            if (typeof v==='number') {
-                const d = new Date(new Date(1900,0,1).getTime() + (v-2)*86400000);
-                return d.toISOString().split('T')[0];
+            if (!v) return '';
+            
+            if (typeof v === 'string' && v.includes('-')) {
+                return v;
             }
+            
+            if (typeof v === 'number') {
+                // Excel date serial number (days since 1900-01-00)
+                const excelEpoch = new Date(1900, 0, 1);
+                const days = v - 2; // Excel incorrectly treats 1900 as leap year
+                const date = new Date(excelEpoch.getTime() + days * 86400000);
+                return date.toISOString().split('T')[0];
+            }
+            
             return v;
         }
 
         function formatDateForDisplay(v) {
             if (!v) return '';
-            if (typeof v==='string' && v.includes('-')) {
+            
+            if (typeof v === 'string' && v.includes('-')) {
                 const d = new Date(v);
                 return !isNaN(d.getTime()) ? d.toLocaleDateString('en-IN') : v;
             }
-            if (v instanceof Date) return v.toLocaleDateString('en-IN');
+            
+            if (v instanceof Date) {
+                return v.toLocaleDateString('en-IN');
+            }
+            
             return v;
         }
 
+        // -------------------------------------------------
+        //  INITIALIZE APP
+        // -------------------------------------------------
         window.onload = initApp;
     </script>
 </body>
