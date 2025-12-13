@@ -945,7 +945,7 @@
             resultsContent.innerHTML = '<div class="loading">Loading transport data...</div>';
 
             try {
-                const githubUrl = 'https://raw.githubusercontent.com/bimal-bp/ETransport_Billing_system/main/OCT-TRANS-BILL.xlsx';
+                const githubUrl = 'https://raw.githubusercontent.com/E-TRANSPORT-BILLING/blob/main/Agg_Sales_Report-Nov-25.xlsx';
                 const resp = await fetch(githubUrl);
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const arrayBuffer = await resp.arrayBuffer();
